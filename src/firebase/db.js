@@ -13,13 +13,14 @@ export function getDB() {
 }
 
 export async function saveDraftTeam(db, matchId, memberName, teamData) {
+  if (!matchId || !memberName) throw new Error("Missing matchId or memberName");
   const { players, captain, vc } = teamData;
   const matchRef = doc(db, "matches", matchId);
   await updateDoc(matchRef, {
     [`teams.${memberName}`]: {
-      players,
-      captain,
-      vc,
+      players: Array.isArray(players) ? players : [],
+      captain: captain || "",
+      vc: vc || "",
       submitted: false,
       updatedAt: Date.now(),
     },
@@ -27,14 +28,15 @@ export async function saveDraftTeam(db, matchId, memberName, teamData) {
 }
 
 export async function submitTeam(db, matchId, memberName, teamData) {
+  if (!matchId || !memberName) throw new Error("Missing matchId or memberName");
   const { players, captain, vc } = teamData;
   const matchRef = doc(db, "matches", matchId);
   const now = Date.now();
   await updateDoc(matchRef, {
     [`teams.${memberName}`]: {
-      players,
-      captain,
-      vc,
+      players: Array.isArray(players) ? players : [],
+      captain: captain || "",
+      vc: vc || "",
       submitted: true,
       submittedAt: now,
       updatedAt: now,

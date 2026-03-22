@@ -12,9 +12,13 @@ export default function LeagueSetup({
   showToast,
   onPickMyTeam,
 }) {
-  const [adminPin, setAdminPin]           = useState(metaGame.adminPin || "0000");
-  const [adminPlayerName, setAdminPlayerName] = useState(metaGame.adminProfile?.name || "");
-  const [adminTeamName, setAdminTeamName]     = useState(metaGame.adminProfile?.teamName || "");
+  const [adminPin, setAdminPin] = useState(metaGame.adminPin || "0000");
+  const [adminPlayerName, setAdminPlayerName] = useState(
+    metaGame.adminProfile?.name || "",
+  );
+  const [adminTeamName, setAdminTeamName] = useState(
+    metaGame.adminProfile?.teamName || "",
+  );
 
   useEffect(() => {
     setAdminPin(metaGame.adminPin || "0000");
@@ -22,11 +26,11 @@ export default function LeagueSetup({
     setAdminTeamName(metaGame.adminProfile?.teamName || "");
   }, [metaGame]);
 
-  const adminProfile  = metaGame.adminProfile || {};
-  const hasProfile    = !!adminProfile.name;
-  const myAdminTeam   = hasProfile ? (allTeams[adminProfile.name] || {}) : {};
-  const hasMatch      = !!currentMatchId && !currentMatch.finalized && !currentMatch.revealed;
-  const joinLink      = metaGame.joinCode
+  const adminProfile = metaGame.adminProfile || {};
+  const hasProfile = !!adminProfile.name;
+  const myAdminTeam = hasProfile ? allTeams[adminProfile.name] || {} : {};
+  const hasMatch = !!currentMatchId && !currentMatch.finalized;
+  const joinLink = metaGame.joinCode
     ? `${window.location.origin}${window.location.pathname}?join=${metaGame.joinCode}`
     : "";
 
@@ -43,19 +47,22 @@ export default function LeagueSetup({
   }
 
   async function saveProfile() {
-    if (!adminPlayerName.trim()) { showToast("Enter your player name", "err"); return; }
-    const mSnap   = await getDoc(doc(db, "meta", "members"));
+    if (!adminPlayerName.trim()) {
+      showToast("Enter your player name", "err");
+      return;
+    }
+    const mSnap = await getDoc(doc(db, "meta", "members"));
     const members = mSnap.data() || {};
     members[adminPlayerName.trim()] = {
-      pin:      "__admin__",
+      pin: "__admin__",
       teamName: adminTeamName.trim() || adminPlayerName.trim() + "'s XI",
       joinedAt: Date.now(),
-      isAdmin:  true,
+      isAdmin: true,
     };
     await setDoc(doc(db, "meta", "members"), members);
     await updateDoc(doc(db, "meta", "game"), {
       adminProfile: {
-        name:     adminPlayerName.trim(),
+        name: adminPlayerName.trim(),
         teamName: adminTeamName.trim() || adminPlayerName.trim() + "'s XI",
       },
     });
@@ -86,7 +93,6 @@ export default function LeagueSetup({
     <div className="admin-2col">
       {/* LEFT */}
       <div className="acol">
-
         {/* League settings */}
         <div className="acard">
           <div className="acard-t">⚙️ League Settings</div>
@@ -108,7 +114,8 @@ export default function LeagueSetup({
         <div className="acard">
           <div className="acard-t">🏏 My Player Profile</div>
           <p className="muted" style={{ marginBottom: 12 }}>
-            Set up your player identity so you can also participate in the league as a player.
+            Set up your player identity so you can also participate in the
+            league as a player.
           </p>
           <div className="field">
             <label>Your Name (as a player)</label>
@@ -165,9 +172,9 @@ export default function LeagueSetup({
                   🏏 PICK MY TEAM FOR THIS MATCH
                 </button>
               )}
-              {!hasMatch && currentMatch.revealed && (
+              {!hasMatch && (currentMatch.locked || currentMatch.finalized) && (
                 <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-                  Match already revealed — wait for the next match to pick your team.
+                  Match is locked — wait for the next match to pick your team.
                 </p>
               )}
               {!currentMatchId && (
@@ -192,7 +199,9 @@ export default function LeagueSetup({
             <>
               <div className="join-badge">{metaGame.joinCode}</div>
               <div className="jlink-box">
-                <span style={{ flex: 1, wordBreak: "break-all" }}>{joinLink}</span>
+                <span style={{ flex: 1, wordBreak: "break-all" }}>
+                  {joinLink}
+                </span>
                 <button className="btn-copy" onClick={copyLink}>
                   Copy
                 </button>
@@ -200,7 +209,11 @@ export default function LeagueSetup({
               <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                 Share this link. Friends tap it to register.
               </p>
-              <button className="btn-sm" style={{ marginTop: 10 }} onClick={regenCode}>
+              <button
+                className="btn-sm"
+                style={{ marginTop: 10 }}
+                onClick={regenCode}
+              >
                 New Code
               </button>
             </>

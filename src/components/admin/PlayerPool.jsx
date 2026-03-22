@@ -9,6 +9,7 @@ export default function PlayerPool({
   currentMatch,
   matchPlayers,
   metaGame,
+  onPickMyTeam,
   showToast,
 }) {
   const [cricKey, setCricKey] = useState(metaGame.cricApiKey || "");
@@ -107,8 +108,18 @@ export default function PlayerPool({
       return;
     }
 
-    // Save the match ID
-    await updateDoc(doc(db, "matches", currentMatchId), { liveMatchId: m.id });
+    // Save the match ID, clear old players, reset match state, and update label from API data
+    await updateDoc(doc(db, "matches", currentMatchId), {
+      liveMatchId: m.id,
+      players: [],
+      teams: {},
+      stats: {},
+      revealed: false,
+      locked: false,
+      label: m.name || currentMatch.label,
+      t1: (m.teams && m.teams[0]) || currentMatch.t1 || "",
+      t2: (m.teams && m.teams[1]) || currentMatch.t2 || "",
+    });
     setLiveMatchId(m.id);
     setMatchesList([]);
 
@@ -187,6 +198,14 @@ export default function PlayerPool({
   return (
     <div className="acard">
       <div className="acard-t">🔑 CricketAPI &amp; Players</div>
+      {currentMatch.label && (
+        <div className="match-bar" style={{ margin: "0 0 12px" }}>
+          <div>
+            <div className="match-label-sm">CURRENT MATCH</div>
+            <div className="match-title">{currentMatch.label}</div>
+          </div>
+        </div>
+      )}
 
       {/* API key */}
       <div className="field">
@@ -413,6 +432,35 @@ export default function PlayerPool({
           </div>
         </div>
       </div>
+
+      {/* Pick My Team shortcut — only when match is still open */}
+      {matchPlayers.length > 0 &&
+        onPickMyTeam &&
+        metaGame.adminProfile?.name &&
+        !currentMatch.finalized &&
+        !currentMatch.locked && (
+          <div
+            style={{
+              marginTop: 16,
+              paddingTop: 14,
+              borderTop: "1px solid var(--bd)",
+            }}
+          >
+            <button
+              className="btn-reveal"
+              style={{ width: "100%", fontSize: 15 }}
+              onClick={onPickMyTeam}
+            >
+              🏏 Pick My Team for This Match
+            </button>
+            <p
+              className="muted"
+              style={{ fontSize: 11, marginTop: 6, textAlign: "center" }}
+            >
+              Playing as {metaGame.adminProfile.name}
+            </p>
+          </div>
+        )}
     </div>
   );
 }

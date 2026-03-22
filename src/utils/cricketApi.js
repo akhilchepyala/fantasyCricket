@@ -39,6 +39,12 @@ function mapRole(roleStr) {
   return "BAT";
 }
 
+// Known IPL series IDs — used as fallback when currentMatches has no IPL entries
+const IPL_SERIES_IDS = [
+  "87c62aac-bc3c-4738-ab93-19da0690488f", // IPL 2026
+  "d5a498c8-7596-4b93-8ab0-e0efc3345312", // IPL 2025
+];
+
 /**
  * Fetches current/upcoming matches from CricAPI.
  * Step 1: currentMatches (live + recently ended)
@@ -63,10 +69,17 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
     isIPL ? isIPLName(m.name) : !isIPLName(m.name),
   );
 
-  // Step 2 — series_info for each unique series (max 5 to save credits)
-  const seriesIds = [
-    ...new Set(relevant.map((m) => m.series_id).filter(Boolean)),
-  ].slice(0, 5);
+  // Step 2 — series_info:
+  // For IPL: always fetch known IPL series IDs directly (since IPL may not be in currentMatches)
+  // For international: use series_ids from currentMatches (max 5)
+  let seriesIds;
+  if (isIPL) {
+    seriesIds = IPL_SERIES_IDS;
+  } else {
+    seriesIds = [
+      ...new Set(relevant.map((m) => m.series_id).filter(Boolean)),
+    ].slice(0, 5);
+  }
 
   const seriesResults = await Promise.allSettled(
     seriesIds.map((sid) =>

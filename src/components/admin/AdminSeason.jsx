@@ -5,32 +5,57 @@ import SeasonTable from "../shared/SeasonTable";
 export default function AdminSeason({ allMembers, seasonTotals, showToast }) {
   function exportCSV() {
     const members = Object.keys(allMembers);
+    if (!members.length) {
+      showToast("No data to export", "err");
+      return;
+    }
+
     const rows = members
       .map((name) => {
         const sd = seasonTotals[name] || { total: 0, matches: [] };
         return {
           name,
           teamName: allMembers[name]?.teamName || name,
-          total:    sd.total   || 0,
-          matches:  sd.matches || [],
+          total: sd.total || 0,
+          matches: sd.matches || [],
         };
       })
       .sort((a, b) => b.total - a.total);
 
-    if (!rows.length) { showToast("No data to export", "err"); return; }
+    // Collect all unique match labels across all members
+    const matchLabels = [];
+    const matchLabelSet = new Set();
+    rows.forEach((r) => {
+      r.matches.forEach((m) => {
+        const lbl = m.label || m.matchId || "Match";
+        if (!matchLabelSet.has(lbl)) {
+          matchLabelSet.add(lbl);
+          matchLabels.push(lbl);
+        }
+      });
+    });
 
-    const matchCols = rows[0].matches.map((m) => m.label || "Match");
-    const header    = ["Rank", "Name", "Team", ...matchCols, "Total"];
-    const lines     = [
+    const header = ["Rank", "Name", "Team", ...matchLabels, "Total"];
+    const lines = [
       header.join(","),
-      ...rows.map((r, i) =>
-        [i + 1, r.name, r.teamName, ...r.matches.map((m) => m.pts), r.total].join(",")
-      ),
+      ...rows.map((r, i) => {
+        const ptsByLabel = {};
+        r.matches.forEach((m) => {
+          ptsByLabel[m.label || m.matchId || "Match"] = m.pts;
+        });
+        return [
+          i + 1,
+          r.name,
+          r.teamName,
+          ...matchLabels.map((lbl) => ptsByLabel[lbl] ?? 0),
+          r.total,
+        ].join(",");
+      }),
     ];
 
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-    const a    = document.createElement("a");
-    a.href     = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
     a.download = "ipl_fantasy_season.csv";
     a.click();
     showToast("CSV exported!");

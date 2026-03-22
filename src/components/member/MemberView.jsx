@@ -1,5 +1,6 @@
 // src/components/member/MemberView.jsx
 import React, { useState } from "react";
+import { useApp } from "../../context/AppContext";
 import NavBar from "../shared/NavBar";
 import MatchLeaderboard from "../shared/MatchLeaderboard";
 import SeasonTable from "../shared/SeasonTable";
@@ -22,32 +23,49 @@ export default function MemberView({
   onBackToAdmin,
   showToast,
 }) {
+  const { activeMatches } = useApp();
   const [tab, setTab] = useState("team");
+  const [selectedMatchId, setSelectedMatchId] = useState(null);
+  const [localTeams, setLocalTeams] = useState({});
 
-  const locked = currentMatch.locked || currentMatch.finalized;
-  const revealed = currentMatch.revealed || currentMatch.finalized;
-  const noMatch = !currentMatchId || !currentMatch.label;
-  const isIPL = currentMatch.isIPL !== false;
+  const activeMatchIds = metaGame.activeMatchIds || [];
+  const allActiveIds = Array.from(
+    new Set([...(currentMatchId ? [currentMatchId] : []), ...activeMatchIds]),
+  );
 
-  function renderTeamTab() {
-    return (
-      <SubmissionFlow
-        db={db}
-        currentMatchId={currentMatchId}
-        currentMatch={currentMatch}
-        matchPlayers={matchPlayers}
-        allTeams={allTeams}
-        allMembers={allMembers}
-        session={session}
-        isIPL={isIPL}
-        localTeam={localTeam}
-        setLocalTeam={setLocalTeam}
-        showToast={showToast}
-      />
-    );
+  const effectiveMatchId = selectedMatchId || currentMatchId;
+  const effectiveMatch =
+    (activeMatches[effectiveMatchId] || {}).match || currentMatch;
+  const effectivePlayers =
+    (activeMatches[effectiveMatchId] || {}).players || matchPlayers;
+  const effectiveTeams =
+    (activeMatches[effectiveMatchId] || {}).teams || allTeams;
+
+  const effectiveLocalTeam = localTeams[effectiveMatchId] || {
+    players: [],
+    captain: "",
+    vc: "",
+  };
+
+  function setEffectiveLocalTeam(val) {
+    setLocalTeams((prev) => {
+      const cur = prev[effectiveMatchId] || {
+        players: [],
+        captain: "",
+        vc: "",
+      };
+      const next = typeof val === "function" ? val(cur) : val;
+      if (effectiveMatchId === currentMatchId) setLocalTeam(next);
+      return { ...prev, [effectiveMatchId]: next };
+    });
   }
 
-  function renderLiveTab() {
+  const locked = effectiveMatch.locked || effectiveMatch.finalized || false;
+  const revealed = effectiveMatch.revealed || effectiveMatch.finalized || false;
+  const noMatch = !effectiveMatchId || !effectiveMatch.label;
+  const isIPL = effectiveMatch.isIPL !== false;
+
+  function renderLiveContent() {
     if (noMatch) {
       return (
         <div className="empty-state">
@@ -77,18 +95,8 @@ export default function MemberView({
     }
     return (
       <MatchLeaderboard
-        match={currentMatch}
+        match={effectiveMatch}
         allMembers={allMembers}
-        highlightName={session}
-      />
-    );
-  }
-
-  function renderSeasonTab() {
-    return (
-      <SeasonTable
-        allMembers={allMembers}
-        seasonTotals={seasonTotals}
         highlightName={session}
       />
     );
@@ -111,7 +119,7 @@ export default function MemberView({
         ].map(([t, label]) => (
           <button
             key={t}
-            className={`vtab ${tab === t ? "active" : ""}`}
+            className={"vtab" + (tab === t ? " active" : "")}
             onClick={() => setTab(t)}
           >
             {label}
@@ -119,9 +127,70 @@ export default function MemberView({
         ))}
       </div>
 
-      {tab === "team" && renderTeamTab()}
-      {tab === "live" && renderLiveTab()}
-      {tab === "season" && renderSeasonTab()}
+      {/* Single match selector — always visible when multiple matches active, drives all tabs */}
+      {allActiveIds.length > 1 && (
+        <div style={{ padding: "10px 16px 0" }}>
+          <div className="match-label-sm" style={{ marginBottom: 6 }}>
+            SELECT MATCH
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              flexWrap: "wrap",
+              marginBottom: 4,
+            }}
+          >
+            {allActiveIds.map((mid) => {
+              const m = (activeMatches[mid] || {}).match || {};
+              return (
+                <button
+                  key={mid}
+                  className={
+                    "mt-btn" + (effectiveMatchId === mid ? " mt-active" : "")
+                  }
+                  style={{ fontSize: 12 }}
+                  onClick={() => setSelectedMatchId(mid)}
+                >
+                  {m.label || mid}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* My Team — always mounted to preserve SubmissionFlow state across tab switches */}
+      <div style={{ display: tab === "team" ? "block" : "none" }}>
+        <SubmissionFlow
+          key={effectiveMatchId}
+          db={db}
+          currentMatchId={effectiveMatchId}
+          currentMatch={effectiveMatch}
+          matchPlayers={effectivePlayers}
+          allTeams={effectiveTeams}
+          allMembers={allMembers}
+          session={session}
+          isIPL={isIPL}
+          localTeam={effectiveLocalTeam}
+          setLocalTeam={setEffectiveLocalTeam}
+          showToast={showToast}
+        />
+      </div>
+
+      {/* Live Scores */}
+      <div style={{ display: tab === "live" ? "block" : "none" }}>
+        {renderLiveContent()}
+      </div>
+
+      {/* Season Table */}
+      <div style={{ display: tab === "season" ? "block" : "none" }}>
+        <SeasonTable
+          allMembers={allMembers}
+          seasonTotals={seasonTotals}
+          highlightName={session}
+        />
+      </div>
     </div>
   );
 }

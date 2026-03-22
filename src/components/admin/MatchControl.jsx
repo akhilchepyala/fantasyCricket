@@ -1,6 +1,14 @@
 // src/components/admin/MatchControl.jsx
 import React, { useState, useEffect } from "react";
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  collection,
+  getDocs,
+  serverTimestamp,
+} from "firebase/firestore";
 import { memberMatchTotal } from "../../utils/points";
 
 export default function MatchControl({
@@ -11,39 +19,50 @@ export default function MatchControl({
   allTeams,
   allMembers,
   playerStats,
+  metaGame,
+  activeMatches,
   showToast,
 }) {
   const [matchLabel, setMatchLabel] = useState(currentMatch.label || "");
-  const [t1, setT1]                 = useState(currentMatch.t1    || "");
-  const [t2, setT2]                 = useState(currentMatch.t2    || "");
+  const [t1, setT1] = useState(currentMatch.t1 || "");
+  const [t2, setT2] = useState(currentMatch.t2 || "");
   const [matchIsIPL, setMatchIsIPL] = useState(currentMatch.isIPL !== false);
 
   useEffect(() => {
     setMatchLabel(currentMatch.label || "");
-    setT1(currentMatch.t1    || "");
-    setT2(currentMatch.t2    || "");
+    setT1(currentMatch.t1 || "");
+    setT2(currentMatch.t2 || "");
     setMatchIsIPL(currentMatch.isIPL !== false);
   }, [currentMatch]);
 
-  const locked    = currentMatch.locked   || currentMatch.revealed || currentMatch.finalized;
-  const revealed  = currentMatch.revealed || currentMatch.finalized;
+  const locked =
+    currentMatch.locked || currentMatch.revealed || currentMatch.finalized;
+  const revealed = currentMatch.revealed || currentMatch.finalized;
   const finalized = currentMatch.finalized;
-  const members   = Object.keys(allMembers);
-  const subs      = members.filter((n) => (allTeams[n] || {}).submitted).length;
-  const ranked    = members
+  const members = Object.keys(allMembers);
+  const subs = members.filter((n) => (allTeams[n] || {}).submitted).length;
+  const ranked = members
     .map((n) => ({
-      name:      n,
-      total:     memberMatchTotal(allTeams[n] || {}, playerStats),
+      name: n,
+      total: memberMatchTotal(allTeams[n] || {}, playerStats),
       submitted: !!(allTeams[n] || {}).submitted,
     }))
     .sort((a, b) => b.total - a.total);
 
-  // ── Create / update match ──
+  const activeMatchIds = metaGame.activeMatchIds || [];
+  const extraMatchIds = activeMatchIds.filter((id) => id !== currentMatchId);
+
   async function createOrUpdateMatch() {
-    if (!matchLabel.trim()) { showToast("Enter a match label", "err"); return; }
+    if (!matchLabel.trim()) {
+      showToast("Enter a match label", "err");
+      return;
+    }
     if (currentMatchId && !currentMatch.finalized) {
       await updateDoc(doc(db, "matches", currentMatchId), {
-        label: matchLabel.trim(), t1, t2, isIPL: matchIsIPL,
+        label: matchLabel.trim(),
+        t1,
+        t2,
+        isIPL: matchIsIPL,
       });
       showToast("Match updated ✓");
     } else {
@@ -51,48 +70,118 @@ export default function MatchControl({
       const snap = await getDocs(collection(db, "matches"));
       const matchNum = snap.size + 1;
       await setDoc(doc(db, "matches", mid), {
-        label: matchLabel.trim(), t1, t2, matchNum, isIPL: matchIsIPL,
-        revealed: false, locked: false, finalized: false,
-        players: [], stats: {}, teams: {}, liveMatchId: "",
+        label: matchLabel.trim(),
+        t1,
+        t2,
+        matchNum,
+        isIPL: matchIsIPL,
+        revealed: false,
+        locked: false,
+        finalized: false,
+        players: [],
+        stats: {},
+        teams: {},
+        liveMatchId: "",
         createdAt: serverTimestamp(),
       });
       await updateDoc(doc(db, "meta", "game"), { currentMatchId: mid });
-      showToast(`Match created! (${matchIsIPL ? "IPL" : "International"}) Now load players.`);
+      showToast(
+        `Match created! (${matchIsIPL ? "IPL" : "International"}) Now load players.`,
+      );
     }
   }
 
-  // ── Reveal ──
+  async function addAnotherMatch() {
+    const label = window.prompt(
+      "Label for the new match (e.g. RCB vs KKR — Match 6):",
+    );
+    if (!label || !label.trim()) return;
+    const mid = "match_" + Date.now();
+    const snap = await getDocs(collection(db, "matches"));
+    const matchNum = snap.size + 1;
+    await setDoc(doc(db, "matches", mid), {
+      label: label.trim(),
+      t1: "",
+      t2: "",
+      matchNum,
+      isIPL: matchIsIPL,
+      revealed: false,
+      locked: false,
+      finalized: false,
+      players: [],
+      stats: {},
+      teams: {},
+      liveMatchId: "",
+      createdAt: serverTimestamp(),
+    });
+    const newIds = [...new Set([...activeMatchIds, mid])];
+    await updateDoc(doc(db, "meta", "game"), { activeMatchIds: newIds });
+    showToast(
+      `Match "${label.trim()}" added! Go to Player Pool to load its squad.`,
+    );
+  }
+
+  async function removeExtraMatch(mid) {
+    const matchData = (activeMatches[mid] || {}).match || {};
+    if (
+      !window.confirm(`Remove "${matchData.label || mid}" from active matches?`)
+    )
+      return;
+    const newIds = activeMatchIds.filter((id) => id !== mid);
+    await updateDoc(doc(db, "meta", "game"), { activeMatchIds: newIds });
+    showToast("Match removed from active list");
+  }
+
   async function revealTeams() {
-    if (!window.confirm("Reveal all teams now? Everyone will see each other's picks immediately.")) return;
+    if (
+      !window.confirm(
+        "Reveal all teams now? Everyone will see each other's picks immediately.",
+      )
+    )
+      return;
     await updateDoc(doc(db, "matches", currentMatchId), { revealed: true });
     showToast("Teams revealed! 🥁");
   }
 
-  // ── Lock ──
   async function lockTeams() {
-    if (!window.confirm("Lock teams? No more edits — about 10 mins to first ball.")) return;
+    if (
+      !window.confirm(
+        "Lock teams? No more edits — about 10 mins to first ball.",
+      )
+    )
+      return;
     await updateDoc(doc(db, "matches", currentMatchId), { locked: true });
     showToast("Teams locked 🔒");
   }
 
-  // ── Finalize ──
   async function finalizeMatch() {
-    if (!window.confirm("Finalize this match? Points will be saved to the season leaderboard.")) return;
+    if (
+      !window.confirm(
+        "Finalize this match? Points will be saved to the season leaderboard.",
+      )
+    )
+      return;
     try {
       const stats = currentMatch.stats || {};
       const teams = currentMatch.teams || {};
       const stSnap = await getDoc(doc(db, "season", "totals"));
       const totals = stSnap.exists() ? stSnap.data() : {};
       members.forEach((name) => {
-        const t   = teams[name] || {};
+        const t = teams[name] || {};
         const pts = memberMatchTotal(t, stats);
         if (!totals[name]) totals[name] = { total: 0, matches: [] };
-        const already = totals[name].matches.some((m) => m.matchId === currentMatchId);
+        const already = totals[name].matches.some(
+          (m) => m.matchId === currentMatchId,
+        );
         if (!already) {
-          totals[name].total   = (totals[name].total || 0) + pts;
+          totals[name].total = (totals[name].total || 0) + pts;
           totals[name].matches = [
             ...(totals[name].matches || []),
-            { matchId: currentMatchId, label: currentMatch.label || "Match", pts },
+            {
+              matchId: currentMatchId,
+              label: currentMatch.label || "Match",
+              pts,
+            },
           ];
         }
       });
@@ -104,29 +193,43 @@ export default function MatchControl({
     }
   }
 
-  // ── Start new match ──
   async function startNewMatch() {
-    if (!window.confirm("Start a new match? The current match stays in history.")) return;
+    if (
+      !window.confirm("Start a new match? The current match stays in history.")
+    )
+      return;
     await updateDoc(doc(db, "meta", "game"), { currentMatchId: "" });
     showToast("Ready for next match!");
   }
 
-  // ── Nuclear wipe ──
   async function nukeEverything() {
     const input = window.prompt(
-      "This will delete:\n\n• All match data\n• All teams & picks\n• All stats\n• The entire season table\n\n✅ Member registrations will be KEPT.\n\nType RESET to confirm:"
+      "This will delete:\n\n• All match data\n• All teams & picks\n• All stats\n• The entire season table\n\n✅ Member registrations will be KEPT.\n\nType RESET to confirm:",
     );
-    if (input !== "RESET") { showToast("Cancelled — nothing was deleted"); return; }
+    if (input !== "RESET") {
+      showToast("Cancelled — nothing was deleted");
+      return;
+    }
     try {
       const matchSnap = await getDocs(collection(db, "matches"));
       for (const d of matchSnap.docs) {
         await setDoc(doc(db, "matches", d.id), {
-          label: "", players: [], stats: {}, teams: {},
-          revealed: false, locked: false, finalized: false, liveMatchId: "",
+          label: "",
+          players: [],
+          stats: {},
+          teams: {},
+          revealed: false,
+          locked: false,
+          finalized: false,
+          liveMatchId: "",
         });
       }
       await setDoc(doc(db, "season", "totals"), {});
-      await updateDoc(doc(db, "meta", "game"), { currentMatchId: "", matchPlayers: [] });
+      await updateDoc(doc(db, "meta", "game"), {
+        currentMatchId: "",
+        activeMatchIds: [],
+        matchPlayers: [],
+      });
       showToast("✓ Match data wiped. Member registrations kept!");
     } catch (e) {
       showToast("Error: " + e.message, "err");
@@ -135,12 +238,10 @@ export default function MatchControl({
 
   return (
     <div className="admin-2col">
-      {/* LEFT column */}
       <div className="acol">
-
-        {/* Match setup card */}
         <div className="acard">
           <div className="acard-t">🏏 Current Match</div>
+
           {currentMatchId && (
             <div className="match-bar" style={{ margin: "0 0 12px" }}>
               <div>
@@ -148,8 +249,50 @@ export default function MatchControl({
                 <div className="match-title">{currentMatch.label || "–"}</div>
               </div>
               <span className={`pill ${locked ? "pill-red" : "pill-green"}`}>
-                {finalized ? "✓ Final" : revealed ? "Revealed" : locked ? "Locked" : "Open"}
+                {finalized
+                  ? "✓ Final"
+                  : revealed
+                    ? "Revealed"
+                    : locked
+                      ? "Locked"
+                      : "Open"}
               </span>
+            </div>
+          )}
+
+          {extraMatchIds.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="match-label-sm" style={{ marginBottom: 6 }}>
+                ALSO ACTIVE
+              </div>
+              {extraMatchIds.map((mid) => {
+                const m = (activeMatches[mid] || {}).match || {};
+                return (
+                  <div
+                    key={mid}
+                    className="match-bar"
+                    style={{ margin: "0 0 6px", opacity: 0.85 }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="match-title" style={{ fontSize: 13 }}>
+                        {m.label || mid}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-sm"
+                      style={{
+                        color: "var(--red)",
+                        borderColor: "rgba(255,68,68,.3)",
+                        fontSize: 11,
+                        padding: "3px 8px",
+                      }}
+                      onClick={() => removeExtraMatch(mid)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -164,11 +307,21 @@ export default function MatchControl({
           </div>
           <div className="field">
             <label>Team 1</label>
-            <input type="text" value={t1} onChange={(e) => setT1(e.target.value)} placeholder="Mumbai Indians" />
+            <input
+              type="text"
+              value={t1}
+              onChange={(e) => setT1(e.target.value)}
+              placeholder="Mumbai Indians"
+            />
           </div>
           <div className="field">
             <label>Team 2</label>
-            <input type="text" value={t2} onChange={(e) => setT2(e.target.value)} placeholder="Chennai Super Kings" />
+            <input
+              type="text"
+              value={t2}
+              onChange={(e) => setT2(e.target.value)}
+              placeholder="Chennai Super Kings"
+            />
           </div>
 
           <div className="match-type-toggle">
@@ -194,25 +347,45 @@ export default function MatchControl({
             </span>
           </div>
 
-          <button
-            className="btn-gold"
-            style={{ fontSize: 15, padding: 10 }}
-            onClick={createOrUpdateMatch}
-          >
-            {currentMatchId && !currentMatch.finalized ? "Update Match" : "+ Create New Match"}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              className="btn-gold"
+              style={{ fontSize: 15, padding: 10, flex: 1 }}
+              onClick={createOrUpdateMatch}
+            >
+              {currentMatchId && !currentMatch.finalized
+                ? "Update Match"
+                : "+ Create New Match"}
+            </button>
+            {currentMatchId && !currentMatch.finalized && (
+              <button
+                className="btn-sm"
+                style={{ fontSize: 13, padding: "8px 12px" }}
+                onClick={addAnotherMatch}
+                title="Run two fantasy matches simultaneously"
+              >
+                + Add Another Match
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Match control card */}
         <div className="acard">
           <div className="acard-t">🎮 Match Control</div>
-
           <div className="flow-steps">
             {[
-              ["1 · Teams open",  !locked && !revealed && !finalized, revealed || locked || finalized],
-              ["2 · Toss revealed", revealed && !locked && !finalized, locked || finalized],
-              ["3 · Teams locked",  locked && !finalized,              finalized],
-              ["4 · Finalized",     finalized,                         false],
+              [
+                "1 · Teams open",
+                !locked && !revealed && !finalized,
+                revealed || locked || finalized,
+              ],
+              [
+                "2 · Toss revealed",
+                revealed && !locked && !finalized,
+                locked || finalized,
+              ],
+              ["3 · Teams locked", locked && !finalized, finalized],
+              ["4 · Finalized", finalized, false],
             ].map(([label, isActive, isDone], idx) => (
               <React.Fragment key={idx}>
                 <div
@@ -225,10 +398,30 @@ export default function MatchControl({
             ))}
           </div>
 
-          <div className="srow"><span>Submissions</span>  <span className="pill pill-green">{subs}/{members.length}</span></div>
-          <div className="srow"><span>Toss Revealed</span><span className={`pill ${revealed ? "pill-red" : "pill-green"}`}>{revealed ? "YES" : "NO"}</span></div>
-          <div className="srow"><span>Teams Locked</span> <span className={`pill ${locked   ? "pill-red" : "pill-green"}`}>{locked   ? "YES" : "NO"}</span></div>
-          <div className="srow"><span>Finalized</span>    <span className={`pill ${finalized ? "pill-red" : "pill-green"}`}>{finalized ? "YES" : "NO"}</span></div>
+          <div className="srow">
+            <span>Submissions</span>{" "}
+            <span className="pill pill-green">
+              {subs}/{members.length}
+            </span>
+          </div>
+          <div className="srow">
+            <span>Toss Revealed</span>
+            <span className={`pill ${revealed ? "pill-red" : "pill-green"}`}>
+              {revealed ? "YES" : "NO"}
+            </span>
+          </div>
+          <div className="srow">
+            <span>Teams Locked</span>{" "}
+            <span className={`pill ${locked ? "pill-red" : "pill-green"}`}>
+              {locked ? "YES" : "NO"}
+            </span>
+          </div>
+          <div className="srow">
+            <span>Finalized</span>{" "}
+            <span className={`pill ${finalized ? "pill-red" : "pill-green"}`}>
+              {finalized ? "YES" : "NO"}
+            </span>
+          </div>
 
           <div className="ctrl-btns">
             {!revealed && currentMatchId && (
@@ -236,7 +429,9 @@ export default function MatchControl({
                 <button className="btn-reveal" onClick={revealTeams}>
                   🥁 TOSS DONE — REVEAL TEAMS!
                 </button>
-                <p className="ctrl-hint">Hit this the moment toss happens. Everyone sees all teams.</p>
+                <p className="ctrl-hint">
+                  Hit this the moment toss happens. Everyone sees all teams.
+                </p>
               </>
             )}
             {revealed && !locked && (
@@ -244,7 +439,9 @@ export default function MatchControl({
                 <button className="btn-warn" onClick={lockTeams}>
                   🔒 Lock Teams (10 min before play)
                 </button>
-                <p className="ctrl-hint">No more edits after this. Hit it ~10 mins before first ball.</p>
+                <p className="ctrl-hint">
+                  No more edits after this. Hit it ~10 mins before first ball.
+                </p>
               </>
             )}
             {locked && !finalized && (
@@ -263,19 +460,29 @@ export default function MatchControl({
             )}
           </div>
 
-          {/* Test wipe */}
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--bd)" }}>
+          <div
+            style={{
+              marginTop: 16,
+              paddingTop: 14,
+              borderTop: "1px solid var(--bd)",
+            }}
+          >
             <div
               style={{
-                fontFamily: "'Barlow Condensed',sans-serif", fontSize: 13,
-                fontWeight: 700, letterSpacing: "1.5px", textTransform: "uppercase",
-                color: "var(--muted)", marginBottom: 6,
+                fontFamily: "'Barlow Condensed',sans-serif",
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: "1.5px",
+                textTransform: "uppercase",
+                color: "var(--muted)",
+                marginBottom: 6,
               }}
             >
               🧪 Test Mode
             </div>
             <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-              Wipe everything — match, teams, stats, season table. Member registrations are kept.
+              Wipe everything — match, teams, stats, season table. Member
+              registrations are kept.
             </p>
             <button className="btn-nuke" onClick={nukeEverything}>
               🗑️ Reset Everything (Test Wipe)
@@ -283,7 +490,6 @@ export default function MatchControl({
           </div>
         </div>
 
-        {/* Submissions card */}
         <div className="acard">
           <div className="acard-t">
             👥 Submissions ({subs}/{members.length})
@@ -292,7 +498,13 @@ export default function MatchControl({
           {ranked.map((r, i) => (
             <div key={r.name} className="mrow">
               <span className="mrow-r">
-                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)}
+                {i === 0
+                  ? "🥇"
+                  : i === 1
+                    ? "🥈"
+                    : i === 2
+                      ? "🥉"
+                      : "#" + (i + 1)}
               </span>
               <span className="mrow-n">{r.name}</span>
               <span className={`mrow-s ${r.submitted ? "s-yes" : "s-no"}`}>
@@ -304,7 +516,6 @@ export default function MatchControl({
         </div>
       </div>
 
-      {/* RIGHT column — filled by parent (player pool + leaderboard) */}
       <div className="acol" id="match-right-col" />
     </div>
   );

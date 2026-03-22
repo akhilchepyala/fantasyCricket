@@ -1,6 +1,11 @@
 // src/utils/team.js
 import { PLAYER_CREDITS, OVERSEAS_PLAYERS } from "../constants/players";
-import { MAX_PER_TEAM, MAX_OVERSEAS, BUDGET, ROLE_LIMITS } from "../constants/rules";
+import {
+  MAX_PER_TEAM,
+  MAX_OVERSEAS,
+  BUDGET,
+  ROLE_LIMITS,
+} from "../constants/rules";
 
 export function getCredits(name) {
   return PLAYER_CREDITS[name] || 7;
@@ -39,8 +44,8 @@ export function roleCounts(players, pool) {
 export function getCreditTierClass(cr) {
   if (cr >= 11) return "cr-elite";
   if (cr >= 10) return "cr-premium";
-  if (cr >= 9)  return "cr-standard";
-  if (cr >= 8)  return "cr-stdB";
+  if (cr >= 9) return "cr-standard";
+  if (cr >= 8) return "cr-stdB";
   return "cr-budget";
 }
 
@@ -49,13 +54,19 @@ export function getCreditTierClass(cr) {
  */
 export function validateTeam(team, pool, isIPL) {
   const { players, captain, vc } = team;
-  if (players.length !== 11) return "Select exactly 11 players";
+  if (!Array.isArray(players) || players.length !== 11)
+    return "Select exactly 11 players";
   if (!captain) return "Pick a Captain";
   if (!vc || vc === captain) return "Pick a different Vice-Captain";
+  if (!players.includes(captain)) return "Captain must be in your XI";
+  if (!players.includes(vc)) return "Vice-Captain must be in your XI";
+  if (!pool || pool.length === 0)
+    return "Player pool is empty — contact your admin";
 
   const tc = teamCounts(players, pool);
   const breached = Object.entries(tc).find(([, c]) => c > MAX_PER_TEAM);
-  if (breached) return `Too many players from ${breached[0]} (max ${MAX_PER_TEAM})`;
+  if (breached)
+    return `Too many players from ${breached[0]} (max ${MAX_PER_TEAM})`;
 
   if (isIPL && overseasCount(players) > MAX_OVERSEAS)
     return `Max ${MAX_OVERSEAS} foreign players allowed`;

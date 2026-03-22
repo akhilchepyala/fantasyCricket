@@ -23,41 +23,40 @@ import { fetchScorecard } from "../utils/cricketApi";
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  // ── Screen router ──
-  const [screen, setScreen] = useState("loading"); // loading | login | join | member | admin
-
-  // ── Auth ──
+  const [screen, setScreen] = useState("loading");
   const [session, setSession] = useState({ name: null, isAdmin: false });
 
-  // ── Firestore data ──
   const [metaGame, setMetaGame] = useState({});
   const [allMembers, setAllMembers] = useState({});
-  const [currentMatchId, setCurrentMatchId] = useState(null);
-  const [currentMatch, setCurrentMatch] = useState({});
-  const [matchPlayers, setMatchPlayers] = useState([]);
-  const [allTeams, setAllTeams] = useState({});
-  const [playerStats, setPlayerStats] = useState({});
   const [seasonTotals, setSeasonTotals] = useState({});
 
-  // ── Local (unsaved) team being built ──
+  // ── Multi-match support ──
+  // activeMatches: { [matchId]: { match, players, teams, stats } }
+  const [activeMatches, setActiveMatches] = useState({});
+  // currentMatchId: the primary match (admin view / backward compat)
+  const [currentMatchId, setCurrentMatchId] = useState(null);
+
+  // Derived from activeMatches[currentMatchId] for backward compat
+  const currentMatch = activeMatches[currentMatchId]?.match || {};
+  const matchPlayers = activeMatches[currentMatchId]?.players || [];
+  const allTeams = activeMatches[currentMatchId]?.teams || {};
+  const playerStats = activeMatches[currentMatchId]?.stats || {};
+
   const [localTeam, setLocalTeam] = useState({
     players: [],
     captain: "",
     vc: "",
   });
 
-  // ── Auto-refresh ──
   const [arActive, setArActive] = useState(false);
   const [arSecs, setArSecs] = useState(0);
   const arIntervalRef = useRef(null);
   const arTimerRef = useRef(null);
   const arSecsRef = useRef(0);
 
-  // ── Refs ──
-  const matchUnsubRef = useRef(null);
+  const matchUnsubsRef = useRef({}); // { [matchId]: unsubFn }
   const dbRef = useRef(null);
 
-  // ── URL join code ──
   const urlJoinCode = new URLSearchParams(window.location.search).get("join");
 
   // ────────────────────────────────────────────
@@ -69,11 +68,11 @@ export function AppProvider({ children }) {
         const db = getDB();
         dbRef.current = db;
 
-        // Ensure meta/game doc exists
         const mgSnap = await getDoc(doc(db, "meta", "game"));
         if (!mgSnap.exists()) {
           await setDoc(doc(db, "meta", "game"), {
             currentMatchId: "",
+            activeMatchIds: [],
             adminPin: "0000",
             joinCode: "",
           });
@@ -83,21 +82,45 @@ export function AppProvider({ children }) {
         onSnapshot(doc(db, "meta", "game"), (snap) => {
           const data = snap.data() || {};
           setMetaGame(data);
-          const newMid = data.currentMatchId || "";
-          if (newMid) {
-            setCurrentMatchId((prev) => {
-              if (newMid !== prev) subscribeMatch(db, newMid);
-              return newMid;
-            });
+
+          const primary = data.currentMatchId || "";
+          // activeMatchIds includes primary + any additional matches
+          const ids = Array.from(
+            new Set([...(data.activeMatchIds || []), primary].filter(Boolean)),
+          );
+
+          // Subscribe to each active match
+          ids.forEach((mid) => subscribeMatch(db, mid));
+
+          // Unsubscribe from matches no longer active
+          Object.keys(matchUnsubsRef.current).forEach((mid) => {
+            if (!ids.includes(mid)) {
+              matchUnsubsRef.current[mid]();
+              delete matchUnsubsRef.current[mid];
+              setActiveMatches((prev) => {
+                const next = { ...prev };
+                delete next[mid];
+                return next;
+              });
+            }
+          });
+
+          setCurrentMatchId((prev) => {
+            if (primary && primary !== prev) {
+              setLocalTeam({ players: [], captain: "", vc: "" });
+            }
+            return primary || null;
+          });
+
+          if (!primary) {
+            setCurrentMatchId(null);
           }
         });
 
-        // Real-time: members
         onSnapshot(doc(db, "meta", "members"), (snap) => {
           setAllMembers(snap.data() || {});
         });
 
-        // Real-time: season totals
         onSnapshot(doc(db, "season", "totals"), (snap) => {
           setSeasonTotals(snap.data() || {});
         });
@@ -113,15 +136,23 @@ export function AppProvider({ children }) {
   }, []);
 
   function subscribeMatch(db, mid) {
-    if (matchUnsubRef.current) matchUnsubRef.current();
-    matchUnsubRef.current = onSnapshot(doc(db, "matches", mid), (snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data() || {};
-      setCurrentMatch(data);
-      setMatchPlayers(data.players || []);
-      setPlayerStats(data.stats || {});
-      setAllTeams(data.teams || {});
-    });
+    if (matchUnsubsRef.current[mid]) return; // already subscribed
+    matchUnsubsRef.current[mid] = onSnapshot(
+      doc(db, "matches", mid),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() || {};
+        setActiveMatches((prev) => ({
+          ...prev,
+          [mid]: {
+            match: data,
+            players: data.players || [],
+            stats: data.stats || {},
+            teams: data.teams || {},
+          },
+        }));
+      },
+    );
   }
 
   // ────────────────────────────────────────────
@@ -146,7 +177,10 @@ export function AppProvider({ children }) {
 
   function logout() {
     stopAR();
+    Object.values(matchUnsubsRef.current).forEach((unsub) => unsub());
+    matchUnsubsRef.current = {};
     setSession({ name: null, isAdmin: false });
+    setLocalTeam({ players: [], captain: "", vc: "" });
     setScreen("login");
     window.history.replaceState({}, "", window.location.pathname);
   }
@@ -156,10 +190,11 @@ export function AppProvider({ children }) {
     setScreen("admin");
   }
 
-  async function loadMemberTeam(name) {
+  async function loadMemberTeam(name, matchId) {
     const db = dbRef.current;
-    if (!currentMatchId || !db) return { players: [], captain: "", vc: "" };
-    const matchSnap = await getDoc(doc(db, "matches", currentMatchId));
+    const mid = matchId || currentMatchId;
+    if (!mid || !db) return { players: [], captain: "", vc: "" };
+    const matchSnap = await getDoc(doc(db, "matches", mid));
     if (!matchSnap.exists()) return { players: [], captain: "", vc: "" };
     const t = (matchSnap.data().teams || {})[name] || {};
     return {
@@ -193,9 +228,7 @@ export function AppProvider({ children }) {
         );
         if (updatedCount > 0) {
           const su = {};
-          // Merge with existing stats
-          const existingStats = mdata.stats || {};
-          const merged = { ...existingStats };
+          const merged = { ...(mdata.stats || {}) };
           Object.entries(updatedStats).forEach(([p, s]) => {
             merged[p] = { ...(merged[p] || {}), ...s };
           });
@@ -248,10 +281,8 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider
       value={{
-        // Screen
         screen,
         setScreen,
-        // Auth
         session,
         loginAdmin,
         loginMember,
@@ -259,7 +290,6 @@ export function AppProvider({ children }) {
         logout,
         backToAdmin,
         loadMemberTeam,
-        // Data
         db,
         metaGame,
         allMembers,
@@ -269,16 +299,14 @@ export function AppProvider({ children }) {
         allTeams,
         playerStats,
         seasonTotals,
-        // Local team
+        activeMatches,
         localTeam,
         setLocalTeam,
-        // Auto-refresh
         arActive,
         arSecs,
         startAR,
         stopAR,
         autoFetchStats,
-        // URL
         urlJoinCode,
       }}
     >

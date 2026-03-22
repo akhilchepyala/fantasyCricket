@@ -44,7 +44,8 @@ export default function SubmissionFlow({
 
   // ── Auto-save draft (debounced 1500 ms) ──
   useEffect(() => {
-    if (locked || !currentMatchId || localTeam.players.length === 0) return;
+    if (locked || !currentMatchId || !session || localTeam.players.length === 0)
+      return;
     setSaving(true);
     const timer = setTimeout(async () => {
       try {
@@ -58,7 +59,7 @@ export default function SubmissionFlow({
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [localTeam.players, localTeam.captain, localTeam.vc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [localTeam.players, localTeam.captain, localTeam.vc, currentMatchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Status label ──
   function renderStatusLabel() {
@@ -233,9 +234,15 @@ export default function SubmissionFlow({
 
   // ── Branch 4: Step flow (open match, or editing after submission) ──
   async function handleSubmit() {
+    if (submitting) return;
     const err = validateTeam(localTeam, matchPlayers, isIPL);
     if (err) {
       showToast(err, "err");
+      return;
+    }
+    // Guard: re-check lock state before submitting
+    if (currentMatch?.locked || currentMatch?.finalized) {
+      showToast("Match is locked — submission not allowed", "err");
       return;
     }
     setSubmitting(true);
@@ -243,6 +250,7 @@ export default function SubmissionFlow({
       await submitTeam(db, currentMatchId, session, localTeam);
       setSubmitting(false);
       setEditing(false);
+      setStarted(false);
     } catch (e) {
       setSubmitting(false);
       showToast(e.message || "Submission failed", "err");
