@@ -54,7 +54,7 @@ const IPL_SERIES_IDS = [
  * @returns {Promise<Array>} sorted array: live → upcoming → ended
  */
 export async function fetchCurrentMatches(apiKey, isIPL) {
-  // Step 1 — currentMatches
+  // Step 1 — currentMatches (live + recently ended)
   const r1 = await fetch(
     `https://api.cricapi.com/v1/currentMatches?apikey=${apiKey}&offset=0`,
   );
@@ -64,23 +64,45 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
 
   const current = d1.data || [];
 
-  // Filter to relevant match type first so we only fetch series we care about
-  const relevant = current.filter((m) =>
-    isIPL ? isIPLName(m.name) : !isIPLName(m.name),
-  );
-
-  // Step 2 — series_info:
-  // For IPL: always fetch known IPL series IDs directly (since IPL may not be in currentMatches)
-  // For international: use series_ids from currentMatches (max 5)
+  // Step 2 — collect series IDs to fetch upcoming fixtures from
   let seriesIds;
   if (isIPL) {
+    // IPL: always use known series IDs directly
     seriesIds = IPL_SERIES_IDS;
   } else {
-    seriesIds = [
-      ...new Set(relevant.map((m) => m.series_id).filter(Boolean)),
-    ].slice(0, 5);
+    // International: start with series IDs from currentMatches
+    const fromCurrent = [
+      ...new Set(
+        current
+          .filter((m) => !isIPLName(m.name))
+          .map((m) => m.series_id)
+          .filter(Boolean),
+      ),
+    ];
+
+    // Also fetch the /series list to discover upcoming series not yet in currentMatches
+    // (e.g. NZ vs SA that hasn't started yet)
+    let fromSeriesList = [];
+    try {
+      const r2 = await fetch(
+        `https://api.cricapi.com/v1/series?apikey=${apiKey}&offset=0`,
+      );
+      const d2 = await r2.json();
+      if (d2.status === "success") {
+        fromSeriesList = (d2.data || [])
+          .filter((s) => !isIPLName(s.name))
+          .map((s) => s.id)
+          .filter(Boolean);
+      }
+    } catch (_) {
+      // non-fatal — fall back to currentMatches series only
+    }
+
+    // Merge, dedupe, cap at 8 series (each costs 1 credit)
+    seriesIds = [...new Set([...fromCurrent, ...fromSeriesList])].slice(0, 8);
   }
 
+  // Step 3 — fetch series_info for each series to get full match lists
   const seriesResults = await Promise.allSettled(
     seriesIds.map((sid) =>
       fetch(

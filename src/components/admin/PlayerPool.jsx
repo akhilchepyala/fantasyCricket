@@ -22,6 +22,9 @@ export default function PlayerPool({
   const [manualTeam, setManualTeam] = useState("");
   const [manualRole, setManualRole] = useState("BAT");
 
+  const [seriesId, setSeriesId] = useState("");
+  const [fetchingS, setFetchingS] = useState(false);
+
   useEffect(() => {
     setCricKey(metaGame.cricApiKey || "");
   }, [metaGame.cricApiKey]);
@@ -64,6 +67,36 @@ export default function PlayerPool({
       showToast(e.message, "err");
     }
     setFetching(false);
+  }
+
+  // ── Fetch matches from a specific series ID ──
+  async function fetchSeriesMatches() {
+    const key = cricKey || metaGame.cricApiKey;
+    if (!key) {
+      showToast("Enter API key first", "err");
+      return;
+    }
+    if (!seriesId.trim()) {
+      showToast("Enter a series ID", "err");
+      return;
+    }
+    setFetchingS(true);
+    try {
+      const res = await fetch(
+        `https://api.cricapi.com/v1/series_info?apikey=${key}&id=${seriesId.trim()}`,
+      );
+      const data = await res.json();
+      if (data.status !== "success")
+        throw new Error(data.reason || "Series not found");
+      const matches = data.data?.matchList || [];
+      if (!matches.length)
+        throw new Error("No matches found for this series ID");
+      setMatchesList(matches);
+      showToast(`Found ${matches.length} matches`);
+    } catch (e) {
+      showToast(e.message, "err");
+    }
+    setFetchingS(false);
   }
 
   // ── Group matches by status (mirrors HTML version logic) ──
@@ -266,6 +299,32 @@ export default function PlayerPool({
               ? "🏏 Find IPL Matches"
               : "🌍 Find International Matches"}
         </button>
+      </div>
+
+      {/* Series ID lookup — for matches not showing in auto-fetch */}
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+          Can't find your match? Paste the series ID from cricketdata.org:
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            className="sinp"
+            style={{ margin: 0, flex: 1, fontSize: 12 }}
+            placeholder="e.g. abc123-def456 (series ID)"
+            value={seriesId}
+            onChange={(e) => setSeriesId(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && fetchSeriesMatches()}
+          />
+          <button
+            className="btn-sm"
+            onClick={fetchSeriesMatches}
+            disabled={fetchingS}
+            style={{ flexShrink: 0 }}
+          >
+            {fetchingS ? "…" : "Search Series"}
+          </button>
+        </div>
       </div>
 
       {/* Match list from API — grouped by status */}
