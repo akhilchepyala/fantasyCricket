@@ -53,8 +53,17 @@ const IPL_SERIES_IDS = [
  * @param {boolean} isIPL
  * @returns {Promise<Array>} sorted array: live → upcoming → ended
  */
+/**
+ * Fetches current/upcoming matches from CricAPI.
+ * Step 1: currentMatches (live + recently ended)
+ * Step 2: series search to find upcoming series not yet in currentMatches
+ * Step 3: series_info for each series → full match list
+ * @param {string} apiKey
+ * @param {boolean} isIPL
+ * @returns {Promise<Array>}
+ */
 export async function fetchCurrentMatches(apiKey, isIPL) {
-  // Step 1 — currentMatches (live + recently ended)
+  // Step 1 — currentMatches
   const r1 = await fetch(
     `https://api.cricapi.com/v1/currentMatches?apikey=${apiKey}&offset=0`,
   );
@@ -64,13 +73,11 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
 
   const current = d1.data || [];
 
-  // Step 2 — collect series IDs to fetch upcoming fixtures from
   let seriesIds;
   if (isIPL) {
-    // IPL: always use known series IDs directly
     seriesIds = IPL_SERIES_IDS;
   } else {
-    // International: start with series IDs from currentMatches
+    // Series IDs already in currentMatches
     const fromCurrent = [
       ...new Set(
         current
@@ -79,30 +86,10 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
           .filter(Boolean),
       ),
     ];
-
-    // Also fetch the /series list to discover upcoming series not yet in currentMatches
-    // (e.g. NZ vs SA that hasn't started yet)
-    let fromSeriesList = [];
-    try {
-      const r2 = await fetch(
-        `https://api.cricapi.com/v1/series?apikey=${apiKey}&offset=0`,
-      );
-      const d2 = await r2.json();
-      if (d2.status === "success") {
-        fromSeriesList = (d2.data || [])
-          .filter((s) => !isIPLName(s.name))
-          .map((s) => s.id)
-          .filter(Boolean);
-      }
-    } catch (_) {
-      // non-fatal — fall back to currentMatches series only
-    }
-
-    // Merge, dedupe, cap at 8 series (each costs 1 credit)
-    seriesIds = [...new Set([...fromCurrent, ...fromSeriesList])].slice(0, 8);
+    seriesIds = fromCurrent;
   }
 
-  // Step 3 — fetch series_info for each series to get full match lists
+  // Step 2 — series_info for each series
   const seriesResults = await Promise.allSettled(
     seriesIds.map((sid) =>
       fetch(
@@ -111,7 +98,7 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
     ),
   );
 
-  // Merge: currentMatches first, then upcoming fixtures from series_info
+  // Merge currentMatches + series matchLists
   const seen = new Set();
   const allMatches = [];
 
@@ -133,12 +120,10 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
     }
   });
 
-  // Filter by match type
   const filtered = allMatches.filter((m) =>
     isIPL ? isIPLName(m.name) : !isIPLName(m.name),
   );
 
-  // Sort: live first → upcoming soonest → ended most recent
   filtered.sort((a, b) => {
     const rank = (m) =>
       m.matchStarted && !m.matchEnded ? 0 : !m.matchStarted ? 1 : 2;
@@ -149,6 +134,62 @@ export async function fetchCurrentMatches(apiKey, isIPL) {
   });
 
   return filtered;
+}
+
+/**
+ * Search for series by name, then fetch all their matches.
+ * Uses /series?search= endpoint as per API docs.
+ * @param {string} apiKey
+ * @param {string} query  e.g. "New Zealand South Africa"
+ * @returns {Promise<Array>} matches from matching series
+ */
+export async function searchSeriesMatches(apiKey, query) {
+  const r = await fetch(
+    `https://api.cricapi.com/v1/series?apikey=${apiKey}&offset=0&search=${encodeURIComponent(query)}`,
+  );
+  const d = await r.json();
+  if (d.status !== "success")
+    throw new Error(d.reason || "Series search failed");
+
+  const series = d.data || [];
+  if (!series.length) throw new Error(`No series found for "${query}"`);
+
+  // Fetch series_info for each result (cap at 5 to save credits)
+  const results = await Promise.allSettled(
+    series
+      .slice(0, 5)
+      .map((s) =>
+        fetch(
+          `https://api.cricapi.com/v1/series_info?apikey=${apiKey}&id=${s.id}`,
+        ).then((r) => r.json()),
+      ),
+  );
+
+  const seen = new Set();
+  const matches = [];
+  results.forEach((r) => {
+    if (r.status === "fulfilled" && r.value.status === "success") {
+      (r.value.data?.matchList || []).forEach((m) => {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          matches.push(m);
+        }
+      });
+    }
+  });
+
+  if (!matches.length)
+    throw new Error("Series found but no matches listed yet");
+
+  // Sort: live → upcoming → ended
+  matches.sort((a, b) => {
+    const rank = (m) =>
+      m.matchStarted && !m.matchEnded ? 0 : !m.matchStarted ? 1 : 2;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    return new Date(a.dateTimeGMT || 0) - new Date(b.dateTimeGMT || 0);
+  });
+
+  return { matches, seriesNames: series.slice(0, 5).map((s) => s.name) };
 }
 
 /**

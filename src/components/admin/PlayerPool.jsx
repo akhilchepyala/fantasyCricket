@@ -1,7 +1,11 @@
 // src/components/admin/PlayerPool.jsx
 import React, { useState, useEffect } from "react";
 import { doc, updateDoc } from "firebase/firestore";
-import { fetchCurrentMatches, fetchSquadPlayers } from "../../utils/cricketApi";
+import {
+  fetchCurrentMatches,
+  fetchSquadPlayers,
+  searchSeriesMatches,
+} from "../../utils/cricketApi";
 
 export default function PlayerPool({
   db,
@@ -22,7 +26,7 @@ export default function PlayerPool({
   const [manualTeam, setManualTeam] = useState("");
   const [manualRole, setManualRole] = useState("BAT");
 
-  const [seriesId, setSeriesId] = useState("");
+  const [seriesQuery, setSeriesQuery] = useState("");
   const [fetchingS, setFetchingS] = useState(false);
 
   useEffect(() => {
@@ -69,30 +73,27 @@ export default function PlayerPool({
     setFetching(false);
   }
 
-  // ── Fetch matches from a specific series ID ──
+  // ── Search series by name and show their matches ──
   async function fetchSeriesMatches() {
     const key = cricKey || metaGame.cricApiKey;
     if (!key) {
       showToast("Enter API key first", "err");
       return;
     }
-    if (!seriesId.trim()) {
-      showToast("Enter a series ID", "err");
+    if (!seriesQuery.trim()) {
+      showToast("Enter a series name to search", "err");
       return;
     }
     setFetchingS(true);
     try {
-      const res = await fetch(
-        `https://api.cricapi.com/v1/series_info?apikey=${key}&id=${seriesId.trim()}`,
+      const { matches, seriesNames } = await searchSeriesMatches(
+        key,
+        seriesQuery.trim(),
       );
-      const data = await res.json();
-      if (data.status !== "success")
-        throw new Error(data.reason || "Series not found");
-      const matches = data.data?.matchList || [];
-      if (!matches.length)
-        throw new Error("No matches found for this series ID");
       setMatchesList(matches);
-      showToast(`Found ${matches.length} matches`);
+      showToast(
+        `Found ${matches.length} matches from: ${seriesNames.join(", ")}`,
+      );
     } catch (e) {
       showToast(e.message, "err");
     }
@@ -301,19 +302,19 @@ export default function PlayerPool({
         </button>
       </div>
 
-      {/* Series ID lookup — for matches not showing in auto-fetch */}
+      {/* Series search — for matches not showing in auto-fetch */}
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
-          Can't find your match? Paste the series ID from cricketdata.org:
+          Can't find your match? Search by series name:
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             type="text"
             className="sinp"
             style={{ margin: 0, flex: 1, fontSize: 12 }}
-            placeholder="e.g. abc123-def456 (series ID)"
-            value={seriesId}
-            onChange={(e) => setSeriesId(e.target.value)}
+            placeholder="e.g. New Zealand South Africa 2026"
+            value={seriesQuery}
+            onChange={(e) => setSeriesQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && fetchSeriesMatches()}
           />
           <button
